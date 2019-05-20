@@ -3,6 +3,7 @@
 
 using System;
 using System.Linq.Expressions;
+using JetBrains.Annotations;
 using Microsoft.EntityFrameworkCore.Query.Expressions.Internal;
 using Microsoft.EntityFrameworkCore.Query.Internal;
 
@@ -17,8 +18,16 @@ namespace Microsoft.EntityFrameworkCore.Query.Pipeline
             Type = type;
         }
 
+        public ProjectionBindingExpression(Expression queryExpression, int index, Type type)
+        {
+            QueryExpression = queryExpression;
+            Index = index;
+            Type = type;
+        }
+
         public Expression QueryExpression { get; }
         public ProjectionMember ProjectionMember { get; }
+        public int Index { get; }
         public override Type Type { get; }
         public override ExpressionType NodeType => ExpressionType.Extension;
 
@@ -29,7 +38,7 @@ namespace Microsoft.EntityFrameworkCore.Query.Pipeline
 
         public void Print(ExpressionPrinter expressionPrinter)
         {
-            expressionPrinter.StringBuilder.Append(nameof(ProjectionBindingExpression) + ": " + ProjectionMember);
+            expressionPrinter.StringBuilder.Append(nameof(ProjectionBindingExpression) + ": " + ProjectionMember + "/" + Index);
         }
     }
 }

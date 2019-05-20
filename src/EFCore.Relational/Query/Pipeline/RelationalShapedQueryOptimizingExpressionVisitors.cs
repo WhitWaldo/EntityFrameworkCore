@@ -24,7 +24,7 @@ namespace Microsoft.EntityFrameworkCore.Relational.Query.Pipeline
         public override Expression Visit(Expression query)
         {
             query = base.Visit(query);
-            query = new ShaperExpressionDedupingExpressionVisitor().Process(query);
+            //query = new ShaperExpressionDedupingExpressionVisitor().Process(query);
             query = new SelectExpressionProjectionApplyingExpressionVisitor().Visit(query);
             query = new SelectExpressionTableAliasUniquifyingExpressionVisitor().Visit(query);
 

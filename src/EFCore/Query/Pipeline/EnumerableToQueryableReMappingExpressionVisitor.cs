@@ -47,12 +47,13 @@ namespace Microsoft.EntityFrameworkCore.Query.Pipeline
                     genericArguments = enumerableMethod.GetGenericArguments();
                 }
 
-                foreach (var method in typeof(Queryable).GetTypeInfo().GetDeclaredMethods(methodCallExpression.Method.Name))
+                foreach (var method in typeof(Queryable).GetTypeInfo().GetDeclaredMethods(methodCallExpression.Method.Name).Reverse())
                 {
                     var queryableMethod = method;
                     if (queryableMethod.IsGenericMethod)
                     {
-                        if (queryableMethod.GetGenericArguments().Length == genericArguments.Length)
+                        if (genericArguments != null
+                            && queryableMethod.GetGenericArguments().Length == genericArguments.Length)
                         {
                             queryableMethod = queryableMethod.MakeGenericMethod(genericArguments);
                         }
@@ -115,6 +116,11 @@ namespace Microsoft.EntityFrameworkCore.Query.Pipeline
             if (!enumerableType.IsGenericType
                 || !queryableType.IsGenericType
                 || argumentType.TryGetElementType(typeof(IQueryable<>)) == null)
+            {
+                return false;
+            }
+
+            if (!enumerableType.GetGenericArguments().SequenceEqual(queryableType.GetGenericArguments()))
             {
                 return false;
             }

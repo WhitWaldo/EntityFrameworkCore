@@ -36,7 +36,7 @@ namespace Microsoft.EntityFrameworkCore.Relational.Query.Pipeline
 
             var result = Visit(expression);
 
-            _selectExpression.ApplyProjection(_projectionMapping);
+            _selectExpression.ReplaceProjection(_projectionMapping);
 
             _selectExpression = null;
             _projectionMembers.Clear();
@@ -54,7 +54,8 @@ namespace Microsoft.EntityFrameworkCore.Relational.Query.Pipeline
 
             if (!(expression is NewExpression
                   || expression is MemberInitExpression
-                  || expression is EntityShaperExpression))
+                  || expression is EntityShaperExpression
+                  || expression is CollectionShaperExpression))
             {
                 // This skips the group parameter from GroupJoin
                 if (expression is ParameterExpression parameter
@@ -86,7 +87,6 @@ namespace Microsoft.EntityFrameworkCore.Relational.Query.Pipeline
                 }
 
                 var translation = _sqlTranslator.Translate(expression);
-
                 _projectionMapping[_projectionMembers.Peek()] = translation ?? throw new InvalidOperationException();
 
                 return new ProjectionBindingExpression(_selectExpression, _projectionMembers.Peek(), expression.Type);
@@ -107,6 +107,13 @@ namespace Microsoft.EntityFrameworkCore.Relational.Query.Pipeline
 
                 return entityShaperExpression.Update(
                     new ProjectionBindingExpression(_selectExpression, _projectionMembers.Peek(), typeof(ValueBuffer)));
+            }
+
+            if (extensionExpression is CollectionShaperExpression collectionShaperExpression)
+            {
+                var innerShaper = Visit(collectionShaperExpression.InnerShaper);
+
+                return collectionShaperExpression.Update(innerShaper);
             }
 
             throw new InvalidOperationException();
