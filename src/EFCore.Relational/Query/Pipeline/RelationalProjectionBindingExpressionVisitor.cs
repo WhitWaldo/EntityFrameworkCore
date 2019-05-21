@@ -77,7 +77,8 @@ namespace Microsoft.EntityFrameworkCore.Relational.Query.Pipeline
             if (!(expression is NewExpression
                   || expression is MemberInitExpression
                   || expression is EntityShaperExpression
-                  || expression is CollectionShaperExpression))
+                  || expression is CollectionShaperExpression
+                  || expression is IncludeExpression))
             {
                 // This skips the group parameter from GroupJoin
                 if (expression is ParameterExpression parameter
@@ -108,7 +109,6 @@ namespace Microsoft.EntityFrameworkCore.Relational.Query.Pipeline
                     return new EntityValuesExpression(entityShaperExpression.EntityType, entityShaperExpression.ValueBufferExpression);
                 }
 
-
                 if (_clientEval)
                 {
                     if (expression is ConstantExpression)
@@ -124,16 +124,6 @@ namespace Microsoft.EntityFrameworkCore.Relational.Query.Pipeline
                             Expression.Constant(parameterExpression.Name));
                     }
 
-                    if (expression is MethodCallExpression methodCallExpression
-                        && methodCallExpression.Method.Name == nameof(IncludeHelpers.IncludeMethod))
-                    {
-                        var arguments = methodCallExpression.Arguments.ToList();
-                        arguments[0] = Visit(arguments[0]);
-                        arguments[1] = Visit(arguments[1]);
-
-                        return methodCallExpression.Update(methodCallExpression.Object,  arguments);
-                    }
-
                     var translation = _sqlTranslator.Translate(expression);
                     if (translation == null)
                     {
@@ -146,12 +136,6 @@ namespace Microsoft.EntityFrameworkCore.Relational.Query.Pipeline
                 }
                 else
                 {
-                    if (expression is MethodCallExpression methodCallExpression
-                        && methodCallExpression.Method.Name == nameof(IncludeHelpers.IncludeMethod))
-                    {
-                        return null;
-                    }
-
                     var translation = _sqlTranslator.Translate(expression);
                     if (translation == null)
                     {
@@ -205,6 +189,11 @@ namespace Microsoft.EntityFrameworkCore.Relational.Query.Pipeline
                 }
 
                 return collectionShaperExpression.Update(innerShaper);
+            }
+
+            if (extensionExpression is IncludeExpression includeExpression)
+            {
+                return _clientEval ? base.VisitExtension(includeExpression) : null;
             }
 
             throw new InvalidOperationException();

@@ -13,6 +13,7 @@ using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Metadata.Internal;
 using Microsoft.EntityFrameworkCore.Query;
+using Microsoft.EntityFrameworkCore.Query.Internal;
 using Microsoft.EntityFrameworkCore.Query.Pipeline;
 using Microsoft.EntityFrameworkCore.Relational.Query.Pipeline.SqlExpressions;
 using Microsoft.EntityFrameworkCore.Storage;
@@ -38,21 +39,22 @@ namespace Microsoft.EntityFrameworkCore.Relational.Query.Pipeline
 
         protected override Expression VisitShapedQueryExpression(ShapedQueryExpression shapedQueryExpression)
         {
+            var shaperString = new ExpressionPrinter().Print(shapedQueryExpression.ShaperExpression);
             var shaperBody = InjectEntityMaterializer(shapedQueryExpression.ShaperExpression);
-
+            shaperString = new ExpressionPrinter().Print(shaperBody);
             var selectExpression = (SelectExpression)shapedQueryExpression.QueryExpression;
 
             var newBody = new RelationalProjectionBindingRemovingExpressionVisitor(selectExpression)
                 .Visit(shaperBody);
-
+            shaperString = new ExpressionPrinter().Print(newBody);
             var shaperLambda = Expression.Lambda(
                 newBody,
                 QueryCompilationContext2.QueryContextParameter,
                 RelationalProjectionBindingRemovingExpressionVisitor.DataReaderParameter,
                 _resultCoordinatorParameter);
-
+            shaperString = new ExpressionPrinter().Print(shaperLambda);
             shaperLambda = (LambdaExpression)new CollectionShaperCompilingExpressionVisitor().Visit(shaperLambda);
-
+            shaperString = new ExpressionPrinter().Print(shaperLambda);
             if (Async)
             {
                 return Expression.New(
@@ -364,8 +366,11 @@ namespace Microsoft.EntityFrameworkCore.Relational.Query.Pipeline
                 {
                     var newExpression = (NewExpression)binaryExpression.Right;
 
+                    var projectionBindingExpression = (ProjectionBindingExpression)newExpression.Arguments[0];
                     _materializationContextBindings[parameterExpression]
-                        = (int)((ConstantExpression)_selectExpression.GetProjectionExpression(((ProjectionBindingExpression)newExpression.Arguments[0]).ProjectionMember)).Value;
+                        = projectionBindingExpression.ProjectionMember != null
+                        ? (int)((ConstantExpression)_selectExpression.GetProjectionExpression(projectionBindingExpression.ProjectionMember)).Value
+                        : projectionBindingExpression.Index;
 
                     var updatedExpression = Expression.New(newExpression.Constructor,
                         Expression.Constant(ValueBuffer.Empty),
@@ -383,9 +388,17 @@ namespace Microsoft.EntityFrameworkCore.Relational.Query.Pipeline
                     && methodCallExpression.Method.GetGenericMethodDefinition() == EntityMaterializerSource.TryReadValueMethod)
                 {
                     var originalIndex = (int)((ConstantExpression)methodCallExpression.Arguments[1]).Value;
-                    var indexOffset = methodCallExpression.Arguments[0] is ProjectionBindingExpression projectionBindingExpression
-                        ? (int)((ConstantExpression)_selectExpression.GetProjectionExpression(projectionBindingExpression.ProjectionMember)).Value
-                        : _materializationContextBindings[(ParameterExpression)((MethodCallExpression)methodCallExpression.Arguments[0]).Object];
+                    int indexOffset;
+                    if (methodCallExpression.Arguments[0] is ProjectionBindingExpression projectionBindingExpression)
+                    {
+                        indexOffset = projectionBindingExpression.ProjectionMember != null
+                            ? (int)((ConstantExpression)_selectExpression.GetProjectionExpression(projectionBindingExpression.ProjectionMember)).Value
+                            : projectionBindingExpression.Index;
+                    }
+                    else
+                    {
+                        indexOffset = _materializationContextBindings[(ParameterExpression)((MethodCallExpression)methodCallExpression.Arguments[0]).Object];
+                    }
 
                     var property = (IProperty)((ConstantExpression)methodCallExpression.Arguments[2]).Value;
 

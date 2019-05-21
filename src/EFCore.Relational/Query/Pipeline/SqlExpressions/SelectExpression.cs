@@ -9,6 +9,7 @@ using System.Reflection;
 using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Query.Internal;
 using Microsoft.EntityFrameworkCore.Query.Pipeline;
+using Microsoft.EntityFrameworkCore.Storage;
 
 namespace Microsoft.EntityFrameworkCore.Relational.Query.Pipeline.SqlExpressions
 {
@@ -172,7 +173,7 @@ namespace Microsoft.EntityFrameworkCore.Relational.Query.Pipeline.SqlExpressions
                 _projection.Add(new ProjectionExpression(columnExpression, ""));
             }
 
-            return new ProjectionBindingExpression(this, index, entityProjection.EntityType.ClrType);
+            return new ProjectionBindingExpression(this, index, typeof(ValueBuffer));
         }
 
         public Expression GetIdenfyingKey()
