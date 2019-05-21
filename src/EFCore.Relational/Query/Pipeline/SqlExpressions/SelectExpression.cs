@@ -155,6 +155,13 @@ namespace Microsoft.EntityFrameworkCore.Relational.Query.Pipeline.SqlExpressions
             }
         }
 
+        public int AddToProjection(SqlExpression sqlExpression)
+        {
+            _projection.Add(new ProjectionExpression(sqlExpression, ""));
+
+            return _projection.Count - 1;
+        }
+
         public Expression GetIdenfyingKey()
         {
             var projections = new List<Expression>();

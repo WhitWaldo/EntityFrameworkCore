@@ -5,7 +5,9 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Linq.Expressions;
+using System.Reflection;
 using Microsoft.EntityFrameworkCore.Extensions.Internal;
+using Microsoft.EntityFrameworkCore.Query;
 using Microsoft.EntityFrameworkCore.Query.Pipeline;
 using Microsoft.EntityFrameworkCore.Relational.Query.Pipeline.SqlExpressions;
 using Microsoft.EntityFrameworkCore.Storage;
@@ -21,6 +23,7 @@ namespace Microsoft.EntityFrameworkCore.Relational.Query.Pipeline
             = new Dictionary<ProjectionMember, Expression>();
 
         private readonly Stack<ProjectionMember> _projectionMembers = new Stack<ProjectionMember>();
+        private bool _clientEval;
 
         public RelationalProjectionBindingExpressionVisitor(
             RelationalSqlTranslatingExpressionVisitor sqlTranslatingExpressionVisitor)
@@ -31,18 +34,36 @@ namespace Microsoft.EntityFrameworkCore.Relational.Query.Pipeline
         public Expression Translate(SelectExpression selectExpression, Expression expression)
         {
             _selectExpression = selectExpression;
+            _clientEval = false;
 
             _projectionMembers.Push(new ProjectionMember());
 
             var result = Visit(expression);
 
-            _selectExpression.ReplaceProjection(_projectionMapping);
+            if (result != null)
+            {
+                _selectExpression.ReplaceProjection(_projectionMapping);
 
-            _selectExpression = null;
-            _projectionMembers.Clear();
-            _projectionMapping.Clear();
+                _selectExpression = null;
+                _projectionMembers.Clear();
+                _projectionMapping.Clear();
 
-            return result;
+                return result;
+            }
+            else
+            {
+                _projectionMembers.Clear();
+                _projectionMapping.Clear();
+
+
+                // Client eval of projection
+                _clientEval = true;
+                result= Visit(expression);
+
+                _selectExpression.ReplaceProjection(_projectionMapping);
+
+                return result;
+            }
         }
 
         public override Expression Visit(Expression expression)
@@ -86,14 +107,57 @@ namespace Microsoft.EntityFrameworkCore.Relational.Query.Pipeline
                     return new EntityValuesExpression(entityShaperExpression.EntityType, entityShaperExpression.ValueBufferExpression);
                 }
 
-                var translation = _sqlTranslator.Translate(expression);
-                _projectionMapping[_projectionMembers.Peek()] = translation ?? throw new InvalidOperationException();
 
-                return new ProjectionBindingExpression(_selectExpression, _projectionMembers.Peek(), expression.Type);
+                if (_clientEval)
+                {
+                    if (expression is ConstantExpression)
+                    {
+                        return expression;
+                    }
+
+                    if (expression is ParameterExpression parameterExpression)
+                    {
+                        return Expression.Call(
+                            _getParameterValueMethodInfo.MakeGenericMethod(parameterExpression.Type),
+                            QueryCompilationContext2.QueryContextParameter,
+                            Expression.Constant(parameterExpression.Name));
+                    }
+
+                    var translation = _sqlTranslator.Translate(expression);
+                    if (translation == null)
+                    {
+                        return base.Visit(expression);
+                    }
+                    else
+                    {
+                        var index = _selectExpression.AddToProjection(translation);
+                        return new ProjectionBindingExpression(_selectExpression, index, expression.Type);
+                    }
+                }
+                else
+                {
+                    var translation = _sqlTranslator.Translate(expression);
+                    if (translation == null)
+                    {
+                        return null;
+                    }
+
+                    _projectionMapping[_projectionMembers.Peek()] = translation;
+                    return new ProjectionBindingExpression(_selectExpression, _projectionMembers.Peek(), expression.Type);
+                }
             }
 
             return base.Visit(expression);
         }
+
+        private static readonly MethodInfo _getParameterValueMethodInfo
+            = typeof(RelationalProjectionBindingExpressionVisitor)
+                .GetTypeInfo().GetDeclaredMethod(nameof(GetParameterValue));
+
+#pragma warning disable IDE0052 // Remove unread private members
+        private static T GetParameterValue<T>(QueryContext queryContext, string parameterName)
+#pragma warning restore IDE0052 // Remove unread private members
+            => (T)queryContext.ParameterValues[parameterName];
 
         protected override Expression VisitExtension(Expression extensionExpression)
         {
@@ -101,17 +165,28 @@ namespace Microsoft.EntityFrameworkCore.Relational.Query.Pipeline
             {
                 VerifySelectExpression(entityShaperExpression.ValueBufferExpression);
 
-                _projectionMapping[_projectionMembers.Peek()]
-                    = _selectExpression.GetProjectionExpression(
-                        entityShaperExpression.ValueBufferExpression.ProjectionMember);
+                if (_clientEval)
+                {
+                    throw new InvalidCastException();
+                }
+                else
+                {
+                    _projectionMapping[_projectionMembers.Peek()]
+                        = _selectExpression.GetProjectionExpression(
+                            entityShaperExpression.ValueBufferExpression.ProjectionMember);
 
-                return entityShaperExpression.Update(
-                    new ProjectionBindingExpression(_selectExpression, _projectionMembers.Peek(), typeof(ValueBuffer)));
+                    return entityShaperExpression.Update(
+                        new ProjectionBindingExpression(_selectExpression, _projectionMembers.Peek(), typeof(ValueBuffer)));
+                }
             }
 
             if (extensionExpression is CollectionShaperExpression collectionShaperExpression)
             {
                 var innerShaper = Visit(collectionShaperExpression.InnerShaper);
+                if (innerShaper == null)
+                {
+                    return null;
+                }
 
                 return collectionShaperExpression.Update(innerShaper);
             }
@@ -121,15 +196,37 @@ namespace Microsoft.EntityFrameworkCore.Relational.Query.Pipeline
 
         protected override Expression VisitNew(NewExpression newExpression)
         {
+            if (newExpression.Arguments.Count == 0)
+            {
+                return newExpression;
+            }
+
+            if (!_clientEval
+                && newExpression.Members == null)
+            {
+                return null;
+            }
+
             var newArguments = new Expression[newExpression.Arguments.Count];
             for (var i = 0; i < newArguments.Length; i++)
             {
-                // TODO: Members can be null????
-                var projectionMember = _projectionMembers.Peek().AddMember(newExpression.Members[i]);
-                _projectionMembers.Push(projectionMember);
+                if (_clientEval)
+                {
+                    newArguments[i] = Visit(newExpression.Arguments[i]);
+                }
+                else
+                {
+                    var projectionMember = _projectionMembers.Peek().AddMember(newExpression.Members[i]);
+                    _projectionMembers.Push(projectionMember);
 
-                newArguments[i] = Visit(newExpression.Arguments[i]);
-                _projectionMembers.Pop();
+                    newArguments[i] = Visit(newExpression.Arguments[i]);
+                    if (newArguments[i] == null)
+                    {
+                        return null;
+                    }
+
+                    _projectionMembers.Pop();
+                }
             }
 
             return newExpression.Update(newArguments);
@@ -138,17 +235,36 @@ namespace Microsoft.EntityFrameworkCore.Relational.Query.Pipeline
         protected override Expression VisitMemberInit(MemberInitExpression memberInitExpression)
         {
             var newExpression = (NewExpression)Visit(memberInitExpression.NewExpression);
+            if (!_clientEval
+                && newExpression == null)
+            {
+                return null;
+            }
+
             var newBindings = new MemberAssignment[memberInitExpression.Bindings.Count];
             for (var i = 0; i < newBindings.Length; i++)
             {
                 // TODO: Members can be null????
                 var memberAssignment = (MemberAssignment)memberInitExpression.Bindings[i];
 
-                var projectionMember = _projectionMembers.Peek().AddMember(memberAssignment.Member);
-                _projectionMembers.Push(projectionMember);
+                if (_clientEval)
+                {
+                    newBindings[i] = memberAssignment.Update(Visit(memberAssignment.Expression));
+                }
+                else
+                {
+                    var projectionMember = _projectionMembers.Peek().AddMember(memberAssignment.Member);
+                    _projectionMembers.Push(projectionMember);
 
-                newBindings[i] = memberAssignment.Update(Visit(memberAssignment.Expression));
-                _projectionMembers.Pop();
+                    var visitedExpression = Visit(memberAssignment.Expression);
+                    if (visitedExpression == null)
+                    {
+                        return null;
+                    }
+
+                    newBindings[i] = memberAssignment.Update(visitedExpression);
+                    _projectionMembers.Pop();
+                }
             }
 
             return memberInitExpression.Update(newExpression, newBindings);
