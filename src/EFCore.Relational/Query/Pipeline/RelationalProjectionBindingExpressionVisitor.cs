@@ -8,6 +8,7 @@ using System.Linq.Expressions;
 using System.Reflection;
 using Microsoft.EntityFrameworkCore.Extensions.Internal;
 using Microsoft.EntityFrameworkCore.Query;
+using Microsoft.EntityFrameworkCore.Query.NavigationExpansion;
 using Microsoft.EntityFrameworkCore.Query.Pipeline;
 using Microsoft.EntityFrameworkCore.Relational.Query.Pipeline.SqlExpressions;
 using Microsoft.EntityFrameworkCore.Storage;
@@ -123,6 +124,16 @@ namespace Microsoft.EntityFrameworkCore.Relational.Query.Pipeline
                             Expression.Constant(parameterExpression.Name));
                     }
 
+                    if (expression is MethodCallExpression methodCallExpression
+                        && methodCallExpression.Method.Name == nameof(IncludeHelpers.IncludeMethod))
+                    {
+                        var arguments = methodCallExpression.Arguments.ToList();
+                        arguments[0] = Visit(arguments[0]);
+                        arguments[1] = Visit(arguments[1]);
+
+                        return methodCallExpression.Update(methodCallExpression.Object,  arguments);
+                    }
+
                     var translation = _sqlTranslator.Translate(expression);
                     if (translation == null)
                     {
@@ -130,12 +141,17 @@ namespace Microsoft.EntityFrameworkCore.Relational.Query.Pipeline
                     }
                     else
                     {
-                        var index = _selectExpression.AddToProjection(translation);
-                        return new ProjectionBindingExpression(_selectExpression, index, expression.Type);
+                        return _selectExpression.AddToProjection(translation, expression.Type);
                     }
                 }
                 else
                 {
+                    if (expression is MethodCallExpression methodCallExpression
+                        && methodCallExpression.Method.Name == nameof(IncludeHelpers.IncludeMethod))
+                    {
+                        return null;
+                    }
+
                     var translation = _sqlTranslator.Translate(expression);
                     if (translation == null)
                     {
@@ -167,7 +183,7 @@ namespace Microsoft.EntityFrameworkCore.Relational.Query.Pipeline
 
                 if (_clientEval)
                 {
-                    throw new InvalidCastException();
+                    return entityShaperExpression.Update(_selectExpression.AddToProjection(entityShaperExpression.ValueBufferExpression));
                 }
                 else
                 {

@@ -155,11 +155,24 @@ namespace Microsoft.EntityFrameworkCore.Relational.Query.Pipeline.SqlExpressions
             }
         }
 
-        public int AddToProjection(SqlExpression sqlExpression)
+        public ProjectionBindingExpression AddToProjection(SqlExpression sqlExpression, Type type)
         {
             _projection.Add(new ProjectionExpression(sqlExpression, ""));
 
-            return _projection.Count - 1;
+            return new ProjectionBindingExpression(this, _projection.Count - 1, type);
+        }
+
+        public ProjectionBindingExpression AddToProjection(ProjectionBindingExpression projectionBindingExpression)
+        {
+            var entityProjection = (EntityProjectionExpression)_projectionMapping[projectionBindingExpression.ProjectionMember];
+            var index = _projection.Count;
+            foreach (var property in entityProjection.EntityType.GetProperties())
+            {
+                var columnExpression = entityProjection.GetProperty(property);
+                _projection.Add(new ProjectionExpression(columnExpression, ""));
+            }
+
+            return new ProjectionBindingExpression(this, index, entityProjection.EntityType.ClrType);
         }
 
         public Expression GetIdenfyingKey()
