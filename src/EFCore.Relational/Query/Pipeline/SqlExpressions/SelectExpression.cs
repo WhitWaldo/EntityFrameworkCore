@@ -9,6 +9,7 @@ using System.Reflection;
 using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Query.Internal;
 using Microsoft.EntityFrameworkCore.Query.Pipeline;
+using Microsoft.EntityFrameworkCore.Storage;
 
 namespace Microsoft.EntityFrameworkCore.Relational.Query.Pipeline.SqlExpressions
 {
@@ -103,6 +104,41 @@ namespace Microsoft.EntityFrameworkCore.Relational.Query.Pipeline.SqlExpressions
             };
         }
 
+        public void ReplaceProjection(IDictionary<ProjectionMember, Expression> projectionMapping)
+        {
+            _projectionMapping.Clear();
+
+            foreach (var kvp in projectionMapping)
+            {
+                _projectionMapping[kvp.Key] = kvp.Value;
+            }
+        }
+
+        public Expression GetProjectionExpression(ProjectionMember projectionMember)
+        {
+            return _projectionMapping[projectionMember];
+        }
+
+        public ProjectionBindingExpression AddToProjection(SqlExpression sqlExpression, Type type)
+        {
+            _projection.Add(new ProjectionExpression(sqlExpression, ""));
+
+            return new ProjectionBindingExpression(this, _projection.Count - 1, type);
+        }
+
+        public ProjectionBindingExpression AddToProjection(ProjectionBindingExpression projectionBindingExpression)
+        {
+            var entityProjection = (EntityProjectionExpression)_projectionMapping[projectionBindingExpression.ProjectionMember];
+            var index = _projection.Count;
+            foreach (var property in entityProjection.EntityType.GetProperties())
+            {
+                var columnExpression = entityProjection.GetProperty(property);
+                _projection.Add(new ProjectionExpression(columnExpression, ""));
+            }
+
+            return new ProjectionBindingExpression(this, index, typeof(ValueBuffer));
+        }
+
         public void ApplyPredicate(SqlExpression expression)
         {
             if (expression is SqlConstantExpression sqlConstant
@@ -128,20 +164,6 @@ namespace Microsoft.EntityFrameworkCore.Relational.Query.Pipeline.SqlExpressions
 
         public override ExpressionType NodeType => ExpressionType.Extension;
 
-        public void ReplaceProjection(IDictionary<ProjectionMember, Expression> projectionMapping)
-        {
-            _projectionMapping.Clear();
-
-            foreach (var kvp in projectionMapping)
-            {
-                _projectionMapping[kvp.Key] = kvp.Value;
-            }
-        }
-
-        public Expression GetProjectionExpression(ProjectionMember projectionMember)
-        {
-            return _projectionMapping[projectionMember];
-        }
 
         public void ApplyOrderBy(OrderingExpression orderingExpression)
         {
